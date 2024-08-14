@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>After Effects Simplificado - Exportar Video</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.10.1/dist/ffmpeg.min.js"></script>
+    <style>
+        .timeline-item {
+            height: 30px;
+            background-color: #4a5568;
+            position: absolute;
+            cursor: move;
+        }
+        .timeline-handle {
+            width: 10px;
+            height: 30px;
+            background-color: #2d3748;
+            position: absolute;
+            cursor: ew-resize;
+        }
+        #preview {
+            position: relative;
+            overflow: hidden;
+        }
+        .shape {
+            position: absolute;
+            cursor: move;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white">
+    <div class="container mx-auto p-4">
+        <div class="flex justify-between items-center mb-4">
+            <h1 class="text-2xl font-bold">After Effects Simplificado</h1>
+            <div>
+                <select id="shapeSelect" class="bg-gray-700 text-white p-2 rounded mr-2">
+                    <option value="rectangle">Rectángulo</option>
+                    <option value="circle">Círculo</option>
+                    <option value="triangle">Triángulo</option>
+                </select>
+                <button id="addLayerBtn" class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded mr-2">
+                    Añadir Capa
+                </button>
+                <button id="playBtn" class="bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded mr-2">
+                    Reproducir
+                </button>
+                <button id="exportBtn" class="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded">
+                    Exportar Video
+                </button>
+            </div>
+        </div>
+        
+        <div class="flex">
+            <div id="layersPanel" class="w-1/4 bg-gray-800 p-4 rounded-l">
+                <h2 class="text-xl mb-2">Capas</h2>
+                <ul id="layersList" class="space-y-2">
+                    <!-- Las capas se añadirán aquí dinámicamente -->
+                </ul>
+                <input type="file" id="imageUpload" accept="image/*" class="mt-4">
+            </div>
+            
+            <div class="w-3/4 bg-black p-4 rounded-r">
+                <div id="preview" class="w-full h-64 bg-gray-700">
+                    <!-- Las formas se añadirán aquí dinámicamente -->
+                </div>
+                
+                <div id="timeline" class="mt-4 bg-gray-800 h-32 relative overflow-x-auto">
+                    <!-- Los elementos de la línea de tiempo se añadirán aquí dinámicamente -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createFFmpeg, fetchFile } = FFmpeg;
+        const ffmpeg = createFFmpeg({ log: true });
+
+        let layerCount = 0;
+        const layersList = document.getElementById('layersList');
+        const timeline = document.getElementById('timeline');
+        const preview = document.getElementById('preview');
+        const addLayerBtn = document.getElementById('addLayerBtn');
+        const playBtn = document.getElementById('playBtn');
+        const exportBtn = document.getElementById('exportBtn');
+        const shapeSelect = document.getElementById('shapeSelect');
+        const imageUpload = document.getElementById('imageUpload');
+        let shapes = [];
+
+        addLayerBtn.addEventListener('click', addLayer);
+        playBtn.addEventListener('click', playAnimation);
+        exportBtn.addEventListener('click', exportVideo);
+        imageUpload.addEventListener('change', addImageLayer);
+
+        function addLayer() {
+            layerCount++;
+            const shapeType = shapeSelect.value;
+            const layerName = `${shapeType.charAt(0).toUpperCase() + shapeType.slice(1)} ${layerCount}`;
+            
+            // Añadir capa a la lista
+            const layerItem = document.createElement('li');
+            layerItem.textContent = layerName;
+            layerItem.className = 'bg-gray-700 p-2 rounded';
+            layersList.appendChild(layerItem);
+            
+            // Añadir elemento a la línea de tiempo
+            const timelineItem = document.createElement('div');
+            timelineItem.className = 'timeline-item';
+            timelineItem.style.width = '100px';
+            timelineItem.style.left = '0px';
+            timelineItem.style.top = `${layerCount * 35}px`;
+            timeline.appendChild(timelineItem);
+
+            // Añadir manejadores de inicio y fin
+            const startHandle = document.createElement('div');
+            startHandle.className = 'timeline-handle';
+            startHandle.style.left = '0px';
+            timelineItem.appendChild(startHandle);
+
+            const endHandle = document.createElement('div');
+            endHandle.className = 'timeline-handle';
+            endHandle.style.right = '0px';
+            timelineItem.appendChild(endHandle);
+
+            // Hacer los manejadores arrastrables
+            startHandle.addEventListener('mousedown', (e) => startDrag(e, timelineItem, 'start'));
+            endHandle.addEventListener('mousedown', (e) => startDrag(e, timelineItem, 'end'));
+
+            // Crear forma en el área de previsualización
+            const shape = document.createElement('div');
+            shape.className = 'shape';
+            shape.style.width = '50px';
+            shape.style.height = '50px';
+            shape.style.left = '0px';
+            shape.style.top = `${layerCount * 50}px`;
+            
+            switch(shapeType) {
+                case 'rectangle':
+                    shape.style.backgroundColor = '#3498db';
+                    break;
+                case 'circle':
+                    shape.style.backgroundColor = '#e74c3c';
+                    shape.style.borderRadius = '50%';
+                    break;
+                case 'triangle':
+                    shape.style.width = '0';
+                    shape.style.height = '0';
+                    shape.style.borderLeft = '25px solid transparent';
+                    shape.style.borderRight = '25px solid transparent';
+                    shape.style.borderBottom = '50px solid #2ecc71';
+                    break;
+            }
+            
+            preview.appendChild(shape);
+
+            // Almacenar información de la forma
+            shapes.push({
+                element: shape,
+                timelineItem: timelineItem,
+                startPosition: 0,
+                endPosition: 100,
+                startX: parseInt(shape.style.left),
+                startY: parseInt(shape.style.top),
+                endX: parseInt(shape.style.left) + 300, // Posición final predeterminada
+                endY: parseInt(shape.style.top)
+            });
+
+            // Hacer la forma arrastrable para definir puntos de inicio y final
+            shape.addEventListener('mousedown', (e) => startMove(e, shape));
+        }
+
+        function startDrag(e, timelineItem, type) {
+            e.preventDefault();
+            const startX = e.clientX;
+            const itemRect = timelineItem.getBoundingClientRect();
+            const timelineRect = timeline.getBoundingClientRect();
+
+            function onMouseMove(e) {
+                let newLeft = e.clientX - startX + (type === 'start' ? 0 : itemRect.width);
+                newLeft = Math.max(0, Math.min(newLeft, timelineRect.width - itemRect.width));
+                
+                if (type === 'start') {
+                    timelineItem.style.left = `${newLeft}px`;
+                    timelineItem.style.width = `${itemRect.width - (newLeft - itemRect.left)}px`;
+                } else {
+                    timelineItem.style.width = `${newLeft - itemRect.left}px`;
+                }
+
+                // Actualizar posiciones de inicio y fin
+                const index = Array.from(timeline.children).indexOf(timelineItem);
+                shapes[index].startPosition = parseInt(timelineItem.style.left);
+                shapes[index].endPosition = shapes[index].startPosition + parseInt(timelineItem.style.width);
+            }
+
+            function onMouseUp() {
+                document.removeEventListener('mousemove', onMouseMove);
+                document.removeEventListener('mouseup', onMouseUp);
+            }
+
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+        }
+
+        function addImageLayer(event) {
+            const file = event.target.files[0];
+            if (file) {
+                layerCount++;
+                const layerName = `Imagen ${layerCount}`;
+                
+                // Añadir capa a la lista
+                const layerItem = document.createElement('li');
+                layerItem.textContent = layerName;
+                layerItem.className = 'bg-gray-700 p-2 rounded';
+                layersList.appendChild(layerItem);
+                
+                // Añadir elemento a la línea de tiempo
+                const timelineItem = document.createElement('div');
+                timelineItem.className = 'timeline-item';
+                timelineItem.style.width = '100px';
+                timelineItem.style.left = '0px';
+                timelineItem.style.top = `${layerCount * 35}px`;
+                timeline.appendChild(timelineItem);
+
+                // Añadir manejadores de inicio y fin
+                const startHandle = document.createElement('div');
+                startHandle.className = 'timeline-handle';
+                startHandle.style.left = '0px';
+                timelineItem.appendChild(startHandle);
+
+                const endHandle = document.createElement('div');
+                endHandle.className = 'timeline-handle';
+                endHandle.style.right = '0px';
+                timelineItem.appendChild(endHandle);
+
+                // Hacer los manejadores arrastrables
+                startHandle.addEventListener('mousedown', (e) => startDrag(e, timelineItem, 'start'));
+                endHandle.addEventListener('mousedown', (e) => startDrag(e, timelineItem, 'end'));
+
+                // Crear elemento de imagen en el área de previsualización
+                const img = document.createElement('img');
+                img.className = 'shape';
+                img.style.width = '50px';
+                img.style.height = 'auto';
+                img.style.left = '0px';
+                img.style.top = `${layerCount * 50}px`;
+                img.src = URL.createObjectURL(file);
+                preview.appendChild(img);
+
+                // Almacenar información de la imagen
+                shapes.push({
+                    element: img,
+                    timelineItem: timelineItem,
+                    startPosition: 0,
+                    endPosition: 100,
+                    startX: parseInt(img.style.left),
+                    startY: parseInt(img.style.top),
+                    endX: parseInt(img.style.left) + 300, // Posición final predeterminada
+                    endY: parseInt(img.style.top)
+                });
+
+                // Hacer la imagen arrastrable para definir puntos de inicio y final
+                img.addEventListener('mousedown', (e) => startMove(e, img));
+            }
+        }
+
+        function startMove(e, shape) {
+            e.preventDefault();
+            const startX = e.clientX;
+            const startY = e.clientY;
+            const rect = shape.getBoundingClientRect();
+
+            function onMouseMove(e) {
+                shape.style.left = `${rect.left + e.clientX - startX}px`;
+                shape.style.top = `${rect.top + e.clientY - startY}px`;
+            }
+
+            function onMouseUp(e) {
+                // Actualizar las posiciones de inicio y final
+                const index = shapes.findIndex(s => s.element === shape);
+                if (e.shiftKey) {
+                    shapes[index].endX = parseInt(shape.style.left);
+                    shapes[index].endY = parseInt(shape.style.top);
+                } else {
+                    shapes[index].startX = parseInt(shape.style.left);
+                    shapes[index].startY = parseInt(shape.style.top);
+                }
+                document.removeEventListener('mousemove', onMouseMove);
+                document.removeEventListener('mouseup', onMouseUp);
+            }
+
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+        }
+
+        function playAnimation() {
+            const duration = 3000; // Duración de la animación en ms
+            const start = performance.now();
+
+            function animate(time) {
+                const progress = (time - start) / duration;
+
+                shapes.forEach(shape => {
+                    const startTime = shape.startPosition / timeline.clientWidth;
+                    const endTime = shape.endPosition / timeline.clientWidth;
+                    
+                    if (progress >= startTime && progress <= endTime) {
+                        const shapeProgress = (progress - startTime) / (endTime - startTime);
+                        const currentX = shape.startX + (shape.endX - shape.startX) * shapeProgress;
+                        const currentY = shape.startY + (shape.endY - shape.startY) * shapeProgress;
+                        shape.element.style.left = `${currentX}px`;
+                        shape.element.style.top = `${currentY}px`;
+                    } else if (progress < startTime) {
+                        shape.element.style.left = `${shape.startX}px`;
+                        shape.element.style.top = `${shape.startY}px`;
+                    } else if (progress > endTime) {
+                        shape.element.style.left = `${shape.endX}px`;
+                        shape.element.style.top = `${shape.endY}px`;
+                    }
+                });
+
+                if (progress < 1) {
+                    requestAnimationFrame(animate);
+                }
+            }
+
+            requestAnimationFrame(animate);
+        }
+
+        async function exportVideo() {
+            await ffmpeg.load();
+            const duration = 3000; // Duración de la animación en ms
+            const fps = 30; // Fotogramas por segundo
+            const totalFrames = (duration / 1000) * fps;
+            const width = preview.clientWidth;
+            const height = preview.clientHeight;
+
+            for (let i = 0; i < totalFrames; i++) {
+                const progress = i / totalFrames;
+                const canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+
+                shapes.forEach(shape => {
+                    const startTime = shape.startPosition / timeline.clientWidth;
+                    const endTime = shape.endPosition / timeline.clientWidth;
+                    
+                    if (progress >= startTime && progress <= endTime) {
+                        const shapeProgress = (progress - startTime) / (endTime - startTime);
+                        const currentX = shape.startX + (shape.endX - shape.startX) * shapeProgress;
+                        const currentY = shape.startY + (shape.endY - shape.startY) * shapeProgress;
+                        ctx.drawImage(shape.element, currentX, currentY, shape.element.width, shape.element.height);
+                    } else if (progress < startTime) {
+                        ctx.drawImage(shape.element, shape.startX, shape.startY, shape.element.width, shape.element.height);
+                    } else if (progress > endTime) {
+                        ctx.drawImage(shape.element, shape.endX, shape.endY, shape.element.width, shape.element.height);
+                    }
+                });
+
+                const imgData = canvas.toDataURL('image/png');
+                const imgBuffer = await fetch(imgData).then(res => res.arrayBuffer());
+                ffmpeg.FS('writeFile', `frame${i}.png`, new Uint8Array(imgBuffer));
+            }
+
+            await ffmpeg.run('-r', `${fps}`, '-i', 'frame%d.png', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', 'output.mp4');
+            const data = ffmpeg.FS('readFile', 'output.mp4');
+
+            const video = document.createElement('a');
+            video.href = URL.createObjectURL(new Blob([data.buffer], { type: 'video/mp4' }));
+            video.download = 'output.mp4';
+            video.click();
+
+            // Limpiar archivos temporales
+            for (let i = 0; i < totalFrames; i++) {
+                ffmpeg.FS('unlink', `frame${i}.png`);
+            }
+        }
+    </script>
+</body>
+</html>
